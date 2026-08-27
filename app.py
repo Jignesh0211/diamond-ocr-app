@@ -6,7 +6,7 @@ import io
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance, ImageOps
 import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
@@ -34,7 +34,7 @@ if not st.session_state.authenticated:
                     st.error("Galat Username ya Password! (admin / admin)")
     st.stop()
 
-st.title("💎 Diamond OCR Auto-Updater (High-Res Bulk Mode)")
+st.title("💎 Diamond OCR Auto-Updater (High-Precision Bulk)")
 
 # Google Sheet Connector
 def get_google_sheet():
@@ -62,20 +62,15 @@ def get_google_sheet():
         st.error(f"Google Sheet Connection Error: {str(e)}")
         return None
 
-# High-Resolution Image Preprocessor
-def enhance_image_for_ocr(uploaded_file):
-    image = Image.open(uploaded_file)
-    if image.mode != "RGB":
-        image = image.convert("RGB")
-    
-    # Increase contrast and sharpness for fine text clarity
-    enhancer_contrast = ImageEnhance.Contrast(image)
-    image = enhancer_contrast.enhance(1.4)
-    
-    enhancer_sharpness = ImageEnhance.Sharpness(image)
-    image = enhancer_sharpness.enhance(1.5)
-    
-    return image
+# Advanced Image Contrast Filter
+def enhance_image(uploaded_file):
+    img = Image.open(uploaded_file)
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    # Increase sharpness and clarity for number loops
+    img = ImageEnhance.Sharpness(img).enhance(2.0)
+    img = ImageEnhance.Contrast(img).enhance(1.6)
+    return img
 
 # Formatting Helpers
 def format_mm(raw_mm):
@@ -102,7 +97,7 @@ def format_weight(raw_wt):
     match = re.search(r'\d+(\.\d+)?', str(raw_wt))
     return match.group(0) if match else str(raw_wt).strip()
 
-# High-Precision Bulk OCR Processor
+# Forensic AI OCR Processor
 def process_bulk_images_with_gemini(images):
     try:
         api_key = st.secrets["GEMINI_API_KEY"].strip()
@@ -119,24 +114,18 @@ def process_bulk_images_with_gemini(images):
         )
         
         prompt = """
-        You are a FORENSIC-GRADE OCR SCANNER for Diamond Grading Lab Reports (IGI, GIA) and Factory Pink Slips.
+        You are an ULTRA-ACCURATE OCR ENGINE for diamond manufacturing slips and certificates.
         
-        MANDATORY VERIFICATION PROTOCOL FOR CERTIFICATE NUMBERS:
-        1. Zoom in mentally on the Certificate Number / Report Number section.
-        2. Perform character-by-character spell-out verification.
-        3. Differentiate loops strictly:
-           - '8': Has TWO full, closed, symmetric loops (top loop AND bottom loop).
-           - '6': Has only ONE bottom loop with an open, curving top stem.
-           - '0': Single large hollow oval.
-           - 'B': Flat left vertical line with two right curves.
-        4. If a digit looks like an 8 (two circles), DO NOT convert it to a 6.
-
-        DATA MAPPING RULES:
-        - Pink Slip: Extract 'SrNo' (Serial/Lot No) and 'RecPices'.
-        - Lab Certificate: Extract Carat Weight ('RecTotalWt'), Measurements ('Actual MM'), Colour ('ToColour'), Clarity ('ToClarity'), and exact Certificate Number ('Actual CertNo').
-        - Match each Pink Slip with its respective Lab Certificate.
-
-        Return ONLY a JSON array of objects with the exact schema:
+        INSTRUCTIONS FOR CERTIFICATE NUMBER:
+        - Scrutinize the Report / Certificate Number printed under the barcode or heading.
+        - Verify every individual digit: check whether the third character after LG is '8' or '6'.
+        - Do not guess or assume standard series; extract exactly what is physically printed.
+        
+        DATA MAPPING:
+        - Pink Slip -> SrNo, RecPices
+        - Certificate -> RecTotalWt (Carat weight), Actual MM (Dimensions), ToColour, ToClarity, Actual CertNo (Full Certificate ID)
+        
+        Return strictly a JSON array of objects:
         [
           {
             "SrNo": "770306",
@@ -144,14 +133,14 @@ def process_bulk_images_with_gemini(images):
             "ToClarity": "VVS2",
             "RecPices": "1",
             "RecTotalWt": "1.00",
-            "Actual MM": "6.41 - 6.47 X 3.96",
+            "Actual MM": "6.41*6.47*3.96",
             "Actual CertNo": "LG816614805"
           }
         ]
         """
         
-        enhanced_images = [enhance_image_for_ocr(img) for img in images]
-        contents = [prompt] + enhanced_images
+        processed_images = [enhance_image(img) for img in images]
+        contents = [prompt] + processed_images
         
         response = model.generate_content(contents)
         json_match = re.search(r'\[.*\]', response.text.strip(), re.DOTALL)
@@ -228,10 +217,10 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    st.info(f"📸 {len(uploaded_files)} images loaded for Enhanced OCR.")
+    st.info(f"📸 {len(uploaded_files)} images loaded.")
     
     if st.button("🚀 Process & Update Google Sheet Directly"):
-        with st.spinner(f"Enhancing contrast and processing {len(uploaded_files)} images with forensic OCR..."):
+        with st.spinner(f"Extracting high-contrast OCR from {len(uploaded_files)} images..."):
             extracted_records = process_bulk_images_with_gemini(uploaded_files)
             
             if extracted_records:
@@ -246,4 +235,4 @@ if uploaded_files:
                     else:
                         st.error(f"❌ {msg}")
             else:
-                st.warning("Could not extract valid diamond records. Please ensure images are clear.")
+                st.warning("Could not extract valid diamond records.")
