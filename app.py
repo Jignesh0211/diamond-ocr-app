@@ -28,10 +28,11 @@ if not st.session_state.authenticated:
             password = st.text_input("Password", type="password")
             submit = st.form_submit_button("Login")
             if submit:
-                if username.strip().lower() == "Jignesh" and password.strip().lower() == "Jignesh02":
+                if username.strip().lower() == "admin" and password.strip().lower() == "admin":
                     st.session_state.authenticated = True
                     st.rerun()
-                
+                else:
+                    st.error("Galat Username ya Password! (admin / admin)")
     st.stop()
 
 st.title("⚡ Diamond OCR Ultra-Fast Bulk Updater")
