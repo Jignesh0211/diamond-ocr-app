@@ -59,7 +59,12 @@ def process_images_with_gemini(images):
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        
+        # Fallback handling for model versions
+        try:
+            model = genai.GenerativeModel("gemini-2.5-flash")
+        except:
+            model = genai.GenerativeModel("gemini-1.5-flash-latest")
         
         prompt = """
         You are an expert OCR system for Diamond Manufacturing Slips and Envelopes.
@@ -126,8 +131,6 @@ if uploaded_files:
                 sheet = get_google_sheet()
                 if sheet:
                     try:
-                        existing_data = sheet.get_all_records()
-                        # Append rows
                         for rec in extracted_records:
                             row_vals = list(rec.values())
                             sheet.append_row(row_vals)
