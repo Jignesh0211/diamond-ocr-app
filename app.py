@@ -61,11 +61,10 @@ def get_google_sheet():
         st.error(f"Google Sheet Connection Error: {str(e)}")
         return None
 
-# Format Cleaners
+# Formatting Helpers
 def format_mm(raw_mm):
     if not raw_mm or str(raw_mm).strip().lower() in ["none", ""]:
         return ""
-    # Remove 'mm', extra spaces, and replace 'x' / '-' with '*'
     s = re.sub(r'(?i)mm', '', str(raw_mm)).strip()
     s = re.sub(r'[\s\-xX]+', '*', s)
     s = re.sub(r'\*+', '*', s).strip('*')
@@ -78,6 +77,13 @@ def format_cert_no(raw_cert):
     if not s.upper().startswith("IGI"):
         s = f"IGI {s}"
     return s
+
+def format_weight(raw_wt):
+    if not raw_wt or str(raw_wt).strip().lower() in ["none", ""]:
+        return ""
+    # Extract numeric float part (e.g. '1.00 CARAT' -> '1.00')
+    match = re.search(r'\d+(\.\d+)?', str(raw_wt))
+    return match.group(0) if match else str(raw_wt).strip()
 
 # AI OCR Processor
 def process_images_with_gemini(images):
@@ -92,11 +98,12 @@ def process_images_with_gemini(images):
         - ToColour: Diamond Colour (e.g., D, E, F)
         - ToClarity: Diamond Clarity (e.g., VVS1, VVS2)
         - RecPices: Received pieces (e.g., 1)
-        - RecTotalWt: Received weight/carat (e.g., 1.00, 1.50)
+        - RecTotalWt: Carat weight directly from the Grading Certificate (e.g., 1.00 or 1.50)
         - Actual MM: Measurement numbers (e.g., 6.41 - 6.47 X 3.96)
         - Actual CertNo: Certificate number (e.g., LG616614805)
         
-        Merge info for the same diamond if in separate images.
+        Prioritize the Certificate for weight (RecTotalWt), measurements (Actual MM), colour, clarity, and cert number.
+        Merge information for the matching diamond parcel.
         Return strictly a JSON array of objects.
         """
         contents = [prompt] + [Image.open(img) for img in images]
@@ -105,12 +112,12 @@ def process_images_with_gemini(images):
         
         if json_match:
             records = json.loads(json_match.group(0))
-            # Current Upload Date formatting
-            upload_date = datetime.now().strftime("%d-%b-%y") # Example: 28-Aug-26
+            upload_date = datetime.now().strftime("%d-%b-%y") # Current upload date: e.g. 28-Aug-26
             
             cleaned_records = []
             for r in records:
                 r["RecDate"] = upload_date
+                r["RecTotalWt"] = format_weight(r.get("RecTotalWt", ""))
                 r["Actual MM"] = format_mm(r.get("Actual MM", ""))
                 r["Actual CertNo"] = format_cert_no(r.get("Actual CertNo", ""))
                 cleaned_records.append(r)
@@ -161,7 +168,7 @@ def update_sheet_by_srno(sheet, records):
                     sheet.update_cell(row_idx, col_idx, str(rec[field]))
             updated_count += 1
             
-    return True, f"Successfully {updated_count} record(s) matched and updated!"
+    return True, f"Successfully {updated_count} record(s) matched and updated in their respective rows!"
 
 # File Upload Section
 uploaded_files = st.file_uploader("Upload Diamond Images", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
@@ -169,7 +176,7 @@ uploaded_files = st.file_uploader("Upload Diamond Images", type=["jpg", "jpeg", 
 if uploaded_files:
     st.info(f"📸 {len(uploaded_files)} images selected.")
     if st.button("🚀 Process & Update Google Sheet"):
-        with st.spinner("Processing with custom formats and updating sheet..."):
+        with st.spinner("Extracting certificate details and updating row..."):
             extracted_records = process_images_with_gemini(uploaded_files)
             if extracted_records:
                 st.success("Data successfully formatted & extracted!")
