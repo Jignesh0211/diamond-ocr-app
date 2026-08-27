@@ -5,6 +5,7 @@ import os
 import io
 import re
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from PIL import Image
 import gspread
 from google.oauth2.service_account import Credentials
@@ -81,7 +82,6 @@ def format_cert_no(raw_cert):
 def format_weight(raw_wt):
     if not raw_wt or str(raw_wt).strip().lower() in ["none", ""]:
         return ""
-    # Extract numeric float part (e.g. '1.00 CARAT' -> '1.00')
     match = re.search(r'\d+(\.\d+)?', str(raw_wt))
     return match.group(0) if match else str(raw_wt).strip()
 
@@ -93,17 +93,25 @@ def process_images_with_gemini(images):
         model = genai.GenerativeModel("gemini-3.6-flash")
         
         prompt = """
-        Extract diamond parcel details from all provided images:
-        - SrNo: Serial Number / Lot No from Pink slip (e.g., 770306)
-        - ToColour: Diamond Colour (e.g., D, E, F)
-        - ToClarity: Diamond Clarity (e.g., VVS1, VVS2)
-        - RecPices: Received pieces (e.g., 1)
-        - RecTotalWt: Carat weight directly from the Grading Certificate (e.g., 1.00 or 1.50)
-        - Actual MM: Measurement numbers (e.g., 6.41 - 6.47 X 3.96)
-        - Actual CertNo: Certificate number (e.g., LG616614805)
+        You are an expert diamond grading OCR system.
+        Read each number, character, and digit with utmost precision.
         
-        Prioritize the Certificate for weight (RecTotalWt), measurements (Actual MM), colour, clarity, and cert number.
-        Merge information for the matching diamond parcel.
+        CRITICAL ACCURACY RULES:
+        1. For Certificate Number (Actual CertNo): Read every single digit carefully. Pay close attention not to confuse digit '8' with '6', 'B', or '0'. (e.g. LG816614805 vs LG616614805).
+        2. Extract the exact Carat Weight (RecTotalWt) from the grading certificate.
+        3. Extract the exact measurements (Actual MM) from the certificate.
+        4. Extract SrNo from the pink slip.
+        
+        Fields to extract for each unique diamond parcel:
+        - SrNo: Serial Number / Lot No from Pink slip (e.g., 770306)
+        - ToColour: Diamond Colour from Certificate (e.g., D, E, F)
+        - ToClarity: Diamond Clarity from Certificate (e.g., VVS1, VVS2)
+        - RecPices: Received pieces (e.g., 1)
+        - RecTotalWt: Exact carat weight from Certificate (e.g., 1.00)
+        - Actual MM: Dimensions/Measurements from Certificate (e.g., 6.41 - 6.47 X 3.96)
+        - Actual CertNo: Exact certificate number from Certificate (e.g., LG816614805)
+        
+        Merge all info belonging to the same diamond parcel.
         Return strictly a JSON array of objects.
         """
         contents = [prompt] + [Image.open(img) for img in images]
@@ -112,7 +120,12 @@ def process_images_with_gemini(images):
         
         if json_match:
             records = json.loads(json_match.group(0))
-            upload_date = datetime.now().strftime("%d-%b-%y") # Current upload date: e.g. 28-Aug-26
+            
+            # Accurate Indian Standard Time (IST) Date
+            try:
+                upload_date = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%b-%y")
+            except Exception:
+                upload_date = datetime.now().strftime("%d-%b-%y")
             
             cleaned_records = []
             for r in records:
@@ -176,7 +189,7 @@ uploaded_files = st.file_uploader("Upload Diamond Images", type=["jpg", "jpeg", 
 if uploaded_files:
     st.info(f"📸 {len(uploaded_files)} images selected.")
     if st.button("🚀 Process & Update Google Sheet"):
-        with st.spinner("Extracting certificate details and updating row..."):
+        with st.spinner("Processing with high-accuracy OCR & updating sheet..."):
             extracted_records = process_images_with_gemini(uploaded_files)
             if extracted_records:
                 st.success("Data successfully formatted & extracted!")
