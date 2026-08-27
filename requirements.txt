@@ -1,5 +1,5 @@
 streamlit
-google-genai
-gspread
-oauth2client
+pandas
 pillow
+gspread
+google-generativeai
