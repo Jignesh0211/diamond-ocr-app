@@ -6,7 +6,7 @@ import io
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
@@ -34,7 +34,7 @@ if not st.session_state.authenticated:
                     st.error("Galat Username ya Password! (admin / admin)")
     st.stop()
 
-st.title("💎 Diamond OCR & Google Sheet Auto-Updater")
+st.title("💎 Diamond OCR Auto-Updater (High-Res Bulk Mode)")
 
 # Google Sheet Connector
 def get_google_sheet():
@@ -62,6 +62,21 @@ def get_google_sheet():
         st.error(f"Google Sheet Connection Error: {str(e)}")
         return None
 
+# High-Resolution Image Preprocessor
+def enhance_image_for_ocr(uploaded_file):
+    image = Image.open(uploaded_file)
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    
+    # Increase contrast and sharpness for fine text clarity
+    enhancer_contrast = ImageEnhance.Contrast(image)
+    image = enhancer_contrast.enhance(1.4)
+    
+    enhancer_sharpness = ImageEnhance.Sharpness(image)
+    image = enhancer_sharpness.enhance(1.5)
+    
+    return image
+
 # Formatting Helpers
 def format_mm(raw_mm):
     if not raw_mm or str(raw_mm).strip().lower() in ["none", ""]:
@@ -74,9 +89,11 @@ def format_mm(raw_mm):
 def format_cert_no(raw_cert):
     if not raw_cert or str(raw_cert).strip().lower() in ["none", ""]:
         return ""
-    s = str(raw_cert).strip()
-    if not s.upper().startswith("IGI"):
+    s = str(raw_cert).strip().replace(" ", "").upper()
+    if not s.startswith("IGI"):
         s = f"IGI {s}"
+    else:
+        s = f"IGI {s[3:]}"
     return s
 
 def format_weight(raw_wt):
@@ -85,43 +102,63 @@ def format_weight(raw_wt):
     match = re.search(r'\d+(\.\d+)?', str(raw_wt))
     return match.group(0) if match else str(raw_wt).strip()
 
-# AI OCR Processor
-def process_images_with_gemini(images):
+# High-Precision Bulk OCR Processor
+def process_bulk_images_with_gemini(images):
     try:
         api_key = st.secrets["GEMINI_API_KEY"].strip()
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-3.6-flash")
+        
+        generation_config = {
+            "temperature": 0.0,
+            "top_p": 1.0
+        }
+        
+        model = genai.GenerativeModel(
+            model_name="gemini-3.6-flash",
+            generation_config=generation_config
+        )
         
         prompt = """
-        You are an expert diamond grading OCR system.
-        Read each number, character, and digit with utmost precision.
+        You are a FORENSIC-GRADE OCR SCANNER for Diamond Grading Lab Reports (IGI, GIA) and Factory Pink Slips.
         
-        CRITICAL ACCURACY RULES:
-        1. For Certificate Number (Actual CertNo): Read every single digit carefully. Pay close attention not to confuse digit '8' with '6', 'B', or '0'. (e.g. LG816614805 vs LG616614805).
-        2. Extract the exact Carat Weight (RecTotalWt) from the grading certificate.
-        3. Extract the exact measurements (Actual MM) from the certificate.
-        4. Extract SrNo from the pink slip.
-        
-        Fields to extract for each unique diamond parcel:
-        - SrNo: Serial Number / Lot No from Pink slip (e.g., 770306)
-        - ToColour: Diamond Colour from Certificate (e.g., D, E, F)
-        - ToClarity: Diamond Clarity from Certificate (e.g., VVS1, VVS2)
-        - RecPices: Received pieces (e.g., 1)
-        - RecTotalWt: Exact carat weight from Certificate (e.g., 1.00)
-        - Actual MM: Dimensions/Measurements from Certificate (e.g., 6.41 - 6.47 X 3.96)
-        - Actual CertNo: Exact certificate number from Certificate (e.g., LG816614805)
-        
-        Merge all info belonging to the same diamond parcel.
-        Return strictly a JSON array of objects.
+        MANDATORY VERIFICATION PROTOCOL FOR CERTIFICATE NUMBERS:
+        1. Zoom in mentally on the Certificate Number / Report Number section.
+        2. Perform character-by-character spell-out verification.
+        3. Differentiate loops strictly:
+           - '8': Has TWO full, closed, symmetric loops (top loop AND bottom loop).
+           - '6': Has only ONE bottom loop with an open, curving top stem.
+           - '0': Single large hollow oval.
+           - 'B': Flat left vertical line with two right curves.
+        4. If a digit looks like an 8 (two circles), DO NOT convert it to a 6.
+
+        DATA MAPPING RULES:
+        - Pink Slip: Extract 'SrNo' (Serial/Lot No) and 'RecPices'.
+        - Lab Certificate: Extract Carat Weight ('RecTotalWt'), Measurements ('Actual MM'), Colour ('ToColour'), Clarity ('ToClarity'), and exact Certificate Number ('Actual CertNo').
+        - Match each Pink Slip with its respective Lab Certificate.
+
+        Return ONLY a JSON array of objects with the exact schema:
+        [
+          {
+            "SrNo": "770306",
+            "ToColour": "D",
+            "ToClarity": "VVS2",
+            "RecPices": "1",
+            "RecTotalWt": "1.00",
+            "Actual MM": "6.41 - 6.47 X 3.96",
+            "Actual CertNo": "LG816614805"
+          }
+        ]
         """
-        contents = [prompt] + [Image.open(img) for img in images]
+        
+        enhanced_images = [enhance_image_for_ocr(img) for img in images]
+        contents = [prompt] + enhanced_images
+        
         response = model.generate_content(contents)
         json_match = re.search(r'\[.*\]', response.text.strip(), re.DOTALL)
         
         if json_match:
             records = json.loads(json_match.group(0))
             
-            # Accurate Indian Standard Time (IST) Date
             try:
                 upload_date = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%b-%y")
             except Exception:
@@ -181,19 +218,25 @@ def update_sheet_by_srno(sheet, records):
                     sheet.update_cell(row_idx, col_idx, str(rec[field]))
             updated_count += 1
             
-    return True, f"Successfully {updated_count} record(s) matched and updated in their respective rows!"
+    return True, f"Successfully {updated_count} diamond parcel(s) matched and updated in Google Sheet!"
 
-# File Upload Section
-uploaded_files = st.file_uploader("Upload Diamond Images", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+# File Upload Section (Bulk)
+uploaded_files = st.file_uploader(
+    "Upload All Diamond Images Together (Slips & Certificates)",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True
+)
 
 if uploaded_files:
-    st.info(f"📸 {len(uploaded_files)} images selected.")
-    if st.button("🚀 Process & Update Google Sheet"):
-        with st.spinner("Processing with high-accuracy OCR & updating sheet..."):
-            extracted_records = process_images_with_gemini(uploaded_files)
+    st.info(f"📸 {len(uploaded_files)} images loaded for Enhanced OCR.")
+    
+    if st.button("🚀 Process & Update Google Sheet Directly"):
+        with st.spinner(f"Enhancing contrast and processing {len(uploaded_files)} images with forensic OCR..."):
+            extracted_records = process_bulk_images_with_gemini(uploaded_files)
+            
             if extracted_records:
-                st.success("Data successfully formatted & extracted!")
-                st.dataframe(pd.DataFrame(extracted_records))
+                st.write("### 📊 Extracted Summary:")
+                st.dataframe(pd.DataFrame(extracted_records), use_container_width=True)
                 
                 sheet = get_google_sheet()
                 if sheet is not None:
@@ -203,4 +246,4 @@ if uploaded_files:
                     else:
                         st.error(f"❌ {msg}")
             else:
-                st.warning("No clear data could be extracted.")
+                st.warning("Could not extract valid diamond records. Please ensure images are clear.")
