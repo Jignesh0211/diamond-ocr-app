@@ -13,7 +13,7 @@ import google.generativeai as genai
 # Page Config
 st.set_page_config(page_title="Diamond OCR & Google Sheet", layout="wide", page_icon="💎")
 
-# --- LOGIN AUTHENTICATION ---
+# Login Bypass
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -25,27 +25,24 @@ if not st.session_state.authenticated:
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
             submit = st.form_submit_button("Login")
-            
             if submit:
                 if username.strip().lower() == "admin" and password.strip().lower() == "admin":
                     st.session_state.authenticated = True
                     st.rerun()
                 else:
-                    st.error("Galat Username ya Password! (Username: admin, Password: admin)")
+                    st.error("Galat Username ya Password! (admin / admin)")
     st.stop()
 
-# --- MAIN DASHBOARD ---
 st.title("💎 Diamond OCR & Google Sheet Auto-Updater")
-st.write("Upload slips and envelopes to extract diamond details and auto-update Google Sheet.")
 
 # Helper to connect to Google Sheets
 def get_google_sheet():
     try:
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        gcp_info = dict(st.secrets["gcp_service_account"])
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        if "GCP_JSON" in st.secrets:
+            gcp_info = json.loads(st.secrets["GCP_JSON"])
+        else:
+            gcp_info = dict(st.secrets["gcp_service_account"])
         creds = Credentials.from_service_account_info(gcp_info, scopes=scopes)
         client = gspread.authorize(creds)
         sheet_name = st.secrets.get("GOOGLE_SHEET_NAME", "Sheet1")
@@ -59,45 +56,23 @@ def process_images_with_gemini(images):
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
         genai.configure(api_key=api_key)
-        
-        # Use latest recommended model
         model = genai.GenerativeModel("gemini-3.6-flash")
         
         prompt = """
-        You are an expert OCR system for Diamond Manufacturing Slips and Envelopes.
-        Extract data from the provided images and return a JSON list of records.
-        For each diamond parcel, extract:
-        - SrNo: Serial Number or Lot No from Pink Slip
-        - ToColour: Diamond Color (e.g., D, E, F, G, WHITE, etc.)
-        - ToClarity: Clarity grade (e.g., VVS1, VS1, SI1, etc.)
-        - RecPices: Number of pieces received
-        - RecTotalWt: Total weight / Carats received
-        - RecDate: Date (DD/MM/YYYY or DD-MM-YYYY)
-        - Actual_MM: Millimeter size if available
-        - Actual_CertNo: Certificate number if available
-        
-        Return ONLY a valid JSON array like:
-        [
-          {
-            "SrNo": "101",
-            "ToColour": "WHITE",
-            "ToClarity": "VVS1",
-            "RecPices": "1",
-            "RecTotalWt": "0.50",
-            "RecDate": "28/08/2026",
-            "Actual_MM": "5.10",
-            "Actual_CertNo": "GIA123456"
-          }
-        ]
+        Extract diamond parcel details from images in valid JSON list:
+        - SrNo: Serial Number or Lot No
+        - ToColour: Diamond Color
+        - ToClarity: Clarity grade
+        - RecPices: Number of pieces
+        - RecTotalWt: Weight in carats
+        - RecDate: Date (DD/MM/YYYY)
+        - Actual_MM: Measurement in mm
+        - Actual_CertNo: Certificate number
+        Return ONLY a JSON array.
         """
-        
-        contents = [prompt]
-        for img in images:
-            contents.append(Image.open(img))
-            
+        contents = [prompt] + [Image.open(img) for img in images]
         response = model.generate_content(contents)
-        text = response.text.strip()
-        json_match = re.search(r'\[.*\]', text, re.DOTALL)
+        json_match = re.search(r'\[.*\]', response.text.strip(), re.DOTALL)
         if json_match:
             return json.loads(json_match.group(0))
         return []
@@ -106,33 +81,23 @@ def process_images_with_gemini(images):
         return []
 
 # File Upload Section
-uploaded_files = st.file_uploader(
-    "Upload Diamond Images (Pink Slip / White Envelope)",
-    type=["jpg", "jpeg", "png"],
-    accept_multiple_files=True
-)
+uploaded_files = st.file_uploader("Upload Diamond Images", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
 if uploaded_files:
     st.info(f"📸 {len(uploaded_files)} images selected.")
-    
     if st.button("🚀 Process & Update Google Sheet"):
         with st.spinner("Analyzing images and extracting diamond data..."):
             extracted_records = process_images_with_gemini(uploaded_files)
-            
             if extracted_records:
                 st.success("Data successfully extracted!")
-                df = pd.DataFrame(extracted_records)
-                st.dataframe(df)
-                
-                # Update Google Sheet
+                st.dataframe(pd.DataFrame(extracted_records))
                 sheet = get_google_sheet()
                 if sheet:
                     try:
                         for rec in extracted_records:
-                            row_vals = list(rec.values())
-                            sheet.append_row(row_vals)
+                            sheet.append_row(list(rec.values()))
                         st.success("✅ Google Sheet updated successfully!")
                     except Exception as err:
                         st.error(f"Sheet write error: {err}")
             else:
-                st.warning("No clear data could be extracted. Please check the image quality.")
+                st.warning("No clear data could be extracted.")
