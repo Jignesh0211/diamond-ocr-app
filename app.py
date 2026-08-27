@@ -35,14 +35,21 @@ if not st.session_state.authenticated:
 
 st.title("💎 Diamond OCR & Google Sheet Auto-Updater")
 
-# Helper to connect to Google Sheets
+# Robust Google Sheet Connector
 def get_google_sheet():
     try:
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        if "GCP_JSON" in st.secrets:
-            gcp_info = json.loads(st.secrets["GCP_JSON"])
-        else:
+        
+        # Check both formats
+        if "gcp_service_account" in st.secrets:
             gcp_info = dict(st.secrets["gcp_service_account"])
+        elif "GCP_JSON" in st.secrets:
+            raw_json = st.secrets["GCP_JSON"].strip()
+            gcp_info = json.loads(raw_json)
+        else:
+            st.error("Secrets me Service Account details nahi mili!")
+            return None
+            
         creds = Credentials.from_service_account_info(gcp_info, scopes=scopes)
         client = gspread.authorize(creds)
         sheet_name = st.secrets.get("GOOGLE_SHEET_NAME", "Sheet1")
