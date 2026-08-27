@@ -60,11 +60,8 @@ def process_images_with_gemini(images):
         api_key = st.secrets["GEMINI_API_KEY"]
         genai.configure(api_key=api_key)
         
-        # Fallback handling for model versions
-        try:
-            model = genai.GenerativeModel("gemini-2.5-flash")
-        except:
-            model = genai.GenerativeModel("gemini-1.5-flash-latest")
+        # Use latest recommended model
+        model = genai.GenerativeModel("gemini-3.6-flash")
         
         prompt = """
         You are an expert OCR system for Diamond Manufacturing Slips and Envelopes.
