@@ -31,8 +31,7 @@ if not st.session_state.authenticated:
                 if username.strip().lower() == "Jignesh" and password.strip().lower() == "Jignesh02":
                     st.session_state.authenticated = True
                     st.rerun()
-                else:
-                    st.error("Galat Username ya Password! (admin / admin)")
+                
     st.stop()
 
 st.title("⚡ Diamond OCR Ultra-Fast Bulk Updater")
