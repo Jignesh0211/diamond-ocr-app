@@ -1,0 +1,66 @@
+import json
+from datetime import datetime
+
+import gspread
+import streamlit as st
+from google import genai
+from google.genai import types
+from oauth2client.service_account import ServiceAccountCredentials
+from PIL import Image
+
+# ---------------- CONFIGURATION ----------------
+GEMINI_API_KEY = "AAPKI_GEMINI_API_KEY_YAHA_DALEIN"
+GOOGLE_SHEET_NAME = "Diamond_Records" 
+CREDENTIALS_FILE = "google_credentials.json"
+
+# USERNAME AUR PASSWORD SET KAREIN
+USERNAME = "admin"
+PASSWORD = "mypassword123"
+# ------------------------------------------------
+
+# Session state for login
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
+
+# ================= LOGIN PAGE =================
+def login():
+    st.title("🔒 Login to Diamond OCR Software")
+    
+    with st.form("login_form"):
+        user_input = st.text_input("Username")
+        pass_input = st.text_input("Password", type="password")
+        submit = st.form_submit_button("Login")
+        
+        if submit:
+            if user_input == USERNAME and pass_input == PASSWORD:
+                st.session_state["logged_in"] = True
+                st.success("Login Successful!")
+                st.rerun()  # Page refresh hoga
+            else:
+                st.error("❌ Galat Username ya Password!")
+
+# ================= MAIN SOFTWARE PAGE =================
+def main_software():
+    st.title("💎 Diamond Certificate Bulk Auto-Fill Software")
+    st.write(f"Welcome, **{USERNAME}**! Yaha photos upload karein.")
+
+    # (Yaha se aage wahi pura software ka code aayega jo pehle diya tha)
+    # jaise setup_sheet(), file_uploader(), for loop aadi.
+    
+    # Example snippet:
+    uploaded_files = st.file_uploader(
+        "Photos yaha drag & drop karein:",
+        type=["jpg", "jpeg", "png"],
+        accept_multiple_files=True,
+    )
+    
+    if st.button("Logout"):
+        st.session_state["logged_in"] = False
+        st.rerun()
+
+
+# ================= APP ROUTING =================
+if not st.session_state["logged_in"]:
+    login()
+else:
+    main_software()
