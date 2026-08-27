@@ -54,9 +54,7 @@ def get_google_sheet():
             
         creds = Credentials.from_service_account_info(gcp_info, scopes=scopes)
         client = gspread.authorize(creds)
-        sheet_name = st.secrets.get("GOOGLE_SHEET_NAME", "Sheet1").strip()
-        
-        # Open by title
+        sheet_name = st.secrets.get("GOOGLE_SHEET_NAME", "DD sheet").strip()
         spreadsheet = client.open(sheet_name)
         return spreadsheet.sheet1
     except Exception as e:
@@ -71,16 +69,21 @@ def process_images_with_gemini(images):
         model = genai.GenerativeModel("gemini-3.6-flash")
         
         prompt = """
-        Extract diamond parcel details from images in valid JSON list:
-        - SrNo: Serial Number or Lot No
-        - ToColour: Diamond Color
-        - ToClarity: Clarity grade
-        - RecPices: Number of pieces
-        - RecTotalWt: Weight in carats
-        - RecDate: Date (DD/MM/YYYY)
-        - Actual_MM: Measurement in mm
-        - Actual_CertNo: Certificate number
-        Return ONLY a JSON array.
+        You are an OCR expert for diamond manufacturing slips and grading certificates.
+        From all provided images, extract and aggregate data by Serial Number (SrNo).
+        
+        Fields to extract for each unique diamond parcel:
+        - SrNo: Serial Number / Lot No from Pink slip (e.g., 770306)
+        - ToColour: Diamond Colour (e.g., D, E, F)
+        - ToClarity: Diamond Clarity (e.g., VVS1, VVS2, VS1)
+        - RecPices: Received pieces (e.g., 1)
+        - RecTotalWt: Received weight/carat (e.g., 1.00, 1.50)
+        - RecDate: Received date (e.g., 31/07/2026)
+        - Actual MM: Measurement in mm (e.g., 6.41 - 6.47 X 3.96 MM)
+        - Actual CertNo: Certificate number (e.g., LG616614805)
+        
+        Merge information for the same diamond if slip and cert are in separate photos.
+        Return strictly a JSON array of objects.
         """
         contents = [prompt] + [Image.open(img) for img in images]
         response = model.generate_content(contents)
@@ -92,13 +95,60 @@ def process_images_with_gemini(images):
         st.error(f"AI Extraction Error: {e}")
         return []
 
+# Sheet Update Logic by SrNo
+def update_sheet_by_srno(sheet, records):
+    headers = sheet.row_values(1)
+    
+    # Header index mapping (case-insensitive & clean)
+    clean_headers = [re.sub(r'[^a-zA-Z0-9]', '', h).lower() for h in headers]
+    
+    def find_col(name_patterns):
+        for pattern in name_patterns:
+            clean_pat = re.sub(r'[^a-zA-Z0-9]', '', pattern).lower()
+            if clean_pat in clean_headers:
+                return clean_headers.index(clean_pat) + 1
+        return None
+
+    srno_col = find_col(["SrNo", "Sr No", "SerialNo"])
+    if not srno_col:
+        return False, "Sheet me 'SrNo' column nahi mila!"
+
+    # Field columns
+    field_map = {
+        "ToColour": find_col(["ToColour", "ToColor", "Color", "Colour"]),
+        "ToClarity": find_col(["ToClarity", "Clarity"]),
+        "RecPices": find_col(["RecPices", "RecPcs", "Pcs", "Rec Pcs"]),
+        "RecTotalWt": find_col(["RecTotalWt", "RecWt", "Rec Total Wt", "Weight"]),
+        "RecDate": find_col(["RecDate", "Rec Date"]),
+        "Actual MM": find_col(["Actual MM", "ActualMM", "MM", "Size"]),
+        "Actual CertNo": find_col(["Actual CertNo", "ActualCertNo", "CertNo", "CertificateNo"])
+    }
+
+    all_srnos = [str(x).strip() for x in sheet.col_values(srno_col)]
+    updated_count = 0
+    
+    for rec in records:
+        target_sr = str(rec.get("SrNo", "")).strip()
+        if not target_sr or target_sr == "None":
+            continue
+        
+        if target_sr in all_srnos:
+            row_idx = all_srnos.index(target_sr) + 1  # 1-based index
+            
+            for field, col_idx in field_map.items():
+                if col_idx and field in rec and rec[field] not in [None, "", "None"]:
+                    sheet.update_cell(row_idx, col_idx, str(rec[field]))
+            updated_count += 1
+            
+    return True, f"Successfully {updated_count} record(s) matched and updated in their respective rows!"
+
 # File Upload Section
 uploaded_files = st.file_uploader("Upload Diamond Images", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
 if uploaded_files:
     st.info(f"📸 {len(uploaded_files)} images selected.")
     if st.button("🚀 Process & Update Google Sheet"):
-        with st.spinner("Analyzing images and extracting diamond data..."):
+        with st.spinner("Analyzing images and updating respective rows..."):
             extracted_records = process_images_with_gemini(uploaded_files)
             if extracted_records:
                 st.success("Data successfully extracted!")
@@ -106,13 +156,10 @@ if uploaded_files:
                 
                 sheet = get_google_sheet()
                 if sheet is not None:
-                    try:
-                        for rec in extracted_records:
-                            # Replace None with empty string for clean sheet insertion
-                            clean_vals = ["" if v is None else str(v) for v in rec.values()]
-                            sheet.append_row(clean_vals)
-                        st.success("✅ Google Sheet updated successfully!")
-                    except Exception as err:
-                        st.error(f"Sheet write error: {err}")
+                    success, msg = update_sheet_by_srno(sheet, extracted_records)
+                    if success:
+                        st.success(f"✅ {msg}")
+                    else:
+                        st.error(f"❌ {msg}")
             else:
                 st.warning("No clear data could be extracted.")
