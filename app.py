@@ -13,7 +13,7 @@ import google.generativeai as genai
 # Page Config
 st.set_page_config(page_title="Diamond OCR & Google Sheet", layout="wide", page_icon="💎")
 
-# Login Bypass
+# Login Authentication
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -61,6 +61,24 @@ def get_google_sheet():
         st.error(f"Google Sheet Connection Error: {str(e)}")
         return None
 
+# Format Cleaners
+def format_mm(raw_mm):
+    if not raw_mm or str(raw_mm).strip().lower() in ["none", ""]:
+        return ""
+    # Remove 'mm', extra spaces, and replace 'x' / '-' with '*'
+    s = re.sub(r'(?i)mm', '', str(raw_mm)).strip()
+    s = re.sub(r'[\s\-xX]+', '*', s)
+    s = re.sub(r'\*+', '*', s).strip('*')
+    return s
+
+def format_cert_no(raw_cert):
+    if not raw_cert or str(raw_cert).strip().lower() in ["none", ""]:
+        return ""
+    s = str(raw_cert).strip()
+    if not s.upper().startswith("IGI"):
+        s = f"IGI {s}"
+    return s
+
 # AI OCR Processor
 def process_images_with_gemini(images):
     try:
@@ -69,27 +87,34 @@ def process_images_with_gemini(images):
         model = genai.GenerativeModel("gemini-3.6-flash")
         
         prompt = """
-        You are an OCR expert for diamond manufacturing slips and grading certificates.
-        From all provided images, extract and aggregate data by Serial Number (SrNo).
-        
-        Fields to extract for each unique diamond parcel:
+        Extract diamond parcel details from all provided images:
         - SrNo: Serial Number / Lot No from Pink slip (e.g., 770306)
         - ToColour: Diamond Colour (e.g., D, E, F)
-        - ToClarity: Diamond Clarity (e.g., VVS1, VVS2, VS1)
+        - ToClarity: Diamond Clarity (e.g., VVS1, VVS2)
         - RecPices: Received pieces (e.g., 1)
         - RecTotalWt: Received weight/carat (e.g., 1.00, 1.50)
-        - RecDate: Received date (e.g., 31/07/2026)
-        - Actual MM: Measurement in mm (e.g., 6.41 - 6.47 X 3.96 MM)
+        - Actual MM: Measurement numbers (e.g., 6.41 - 6.47 X 3.96)
         - Actual CertNo: Certificate number (e.g., LG616614805)
         
-        Merge information for the same diamond if slip and cert are in separate photos.
+        Merge info for the same diamond if in separate images.
         Return strictly a JSON array of objects.
         """
         contents = [prompt] + [Image.open(img) for img in images]
         response = model.generate_content(contents)
         json_match = re.search(r'\[.*\]', response.text.strip(), re.DOTALL)
+        
         if json_match:
-            return json.loads(json_match.group(0))
+            records = json.loads(json_match.group(0))
+            # Current Upload Date formatting
+            upload_date = datetime.now().strftime("%d-%b-%y") # Example: 28-Aug-26
+            
+            cleaned_records = []
+            for r in records:
+                r["RecDate"] = upload_date
+                r["Actual MM"] = format_mm(r.get("Actual MM", ""))
+                r["Actual CertNo"] = format_cert_no(r.get("Actual CertNo", ""))
+                cleaned_records.append(r)
+            return cleaned_records
         return []
     except Exception as e:
         st.error(f"AI Extraction Error: {e}")
@@ -98,8 +123,6 @@ def process_images_with_gemini(images):
 # Sheet Update Logic by SrNo
 def update_sheet_by_srno(sheet, records):
     headers = sheet.row_values(1)
-    
-    # Header index mapping (case-insensitive & clean)
     clean_headers = [re.sub(r'[^a-zA-Z0-9]', '', h).lower() for h in headers]
     
     def find_col(name_patterns):
@@ -113,7 +136,6 @@ def update_sheet_by_srno(sheet, records):
     if not srno_col:
         return False, "Sheet me 'SrNo' column nahi mila!"
 
-    # Field columns
     field_map = {
         "ToColour": find_col(["ToColour", "ToColor", "Color", "Colour"]),
         "ToClarity": find_col(["ToClarity", "Clarity"]),
@@ -129,18 +151,17 @@ def update_sheet_by_srno(sheet, records):
     
     for rec in records:
         target_sr = str(rec.get("SrNo", "")).strip()
-        if not target_sr or target_sr == "None":
+        if not target_sr or target_sr.lower() == "none":
             continue
         
         if target_sr in all_srnos:
-            row_idx = all_srnos.index(target_sr) + 1  # 1-based index
-            
+            row_idx = all_srnos.index(target_sr) + 1
             for field, col_idx in field_map.items():
-                if col_idx and field in rec and rec[field] not in [None, "", "None"]:
+                if col_idx and field in rec and str(rec[field]).strip() not in ["None", ""]:
                     sheet.update_cell(row_idx, col_idx, str(rec[field]))
             updated_count += 1
             
-    return True, f"Successfully {updated_count} record(s) matched and updated in their respective rows!"
+    return True, f"Successfully {updated_count} record(s) matched and updated!"
 
 # File Upload Section
 uploaded_files = st.file_uploader("Upload Diamond Images", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
@@ -148,10 +169,10 @@ uploaded_files = st.file_uploader("Upload Diamond Images", type=["jpg", "jpeg", 
 if uploaded_files:
     st.info(f"📸 {len(uploaded_files)} images selected.")
     if st.button("🚀 Process & Update Google Sheet"):
-        with st.spinner("Analyzing images and updating respective rows..."):
+        with st.spinner("Processing with custom formats and updating sheet..."):
             extracted_records = process_images_with_gemini(uploaded_files)
             if extracted_records:
-                st.success("Data successfully extracted!")
+                st.success("Data successfully formatted & extracted!")
                 st.dataframe(pd.DataFrame(extracted_records))
                 
                 sheet = get_google_sheet()
