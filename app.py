@@ -35,33 +35,38 @@ if not st.session_state.authenticated:
 
 st.title("💎 Diamond OCR & Google Sheet Auto-Updater")
 
-# Robust Google Sheet Connector
+# Google Sheet Connector
 def get_google_sheet():
     try:
-        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        scopes = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
         
-        # Check both formats
-        if "gcp_service_account" in st.secrets:
+        if "GCP_JSON" in st.secrets:
+            gcp_info = json.loads(st.secrets["GCP_JSON"].strip())
+        elif "gcp_service_account" in st.secrets:
             gcp_info = dict(st.secrets["gcp_service_account"])
-        elif "GCP_JSON" in st.secrets:
-            raw_json = st.secrets["GCP_JSON"].strip()
-            gcp_info = json.loads(raw_json)
         else:
             st.error("Secrets me Service Account details nahi mili!")
             return None
             
         creds = Credentials.from_service_account_info(gcp_info, scopes=scopes)
         client = gspread.authorize(creds)
-        sheet_name = st.secrets.get("GOOGLE_SHEET_NAME", "Sheet1")
-        return client.open(sheet_name).sheet1
+        sheet_name = st.secrets.get("GOOGLE_SHEET_NAME", "Sheet1").strip()
+        
+        # Open by title
+        spreadsheet = client.open(sheet_name)
+        return spreadsheet.sheet1
     except Exception as e:
-        st.error(f"Google Sheet Connection Error: {e}")
+        st.error(f"Google Sheet Connection Error: {str(e)}")
         return None
 
 # AI OCR Processor
 def process_images_with_gemini(images):
     try:
-        api_key = st.secrets["GEMINI_API_KEY"]
+        api_key = st.secrets["GEMINI_API_KEY"].strip()
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-3.6-flash")
         
@@ -98,11 +103,14 @@ if uploaded_files:
             if extracted_records:
                 st.success("Data successfully extracted!")
                 st.dataframe(pd.DataFrame(extracted_records))
+                
                 sheet = get_google_sheet()
-                if sheet:
+                if sheet is not None:
                     try:
                         for rec in extracted_records:
-                            sheet.append_row(list(rec.values()))
+                            # Replace None with empty string for clean sheet insertion
+                            clean_vals = ["" if v is None else str(v) for v in rec.values()]
+                            sheet.append_row(clean_vals)
                         st.success("✅ Google Sheet updated successfully!")
                     except Exception as err:
                         st.error(f"Sheet write error: {err}")
