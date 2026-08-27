@@ -1,66 +1,45 @@
-import json
-from datetime import datetime
-
-import gspread
 import streamlit as st
-from google import genai
-from google.genai import types
-from oauth2client.service_account import ServiceAccountCredentials
+import pandas as pd
+import json
+import os
+import io
+import re
+from datetime import datetime
 from PIL import Image
+import gspread
+from google.oauth2.service_account import Credentials
+import google.generativeai as genai
 
-# ---------------- CONFIGURATION ----------------
-GEMINI_API_KEY = "AAPKI_GEMINI_API_KEY_YAHA_DALEIN"
-GOOGLE_SHEET_NAME = "Diamond_Records" 
-CREDENTIALS_FILE = "google_credentials.json"
+# Page Config
+st.set_page_config(page_title="Diamond OCR & Google Sheet", layout="wide", page_icon="💎")
 
-# USERNAME AUR PASSWORD SET KAREIN
-USERNAME = "admin"
-PASSWORD = "mypassword123"
-# ------------------------------------------------
+# --- LOGIN BYPASS / AUTHENTICATION ---
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
 
-# Session state for login
-if "logged_in" not in st.session_state:
-    st.session_state["logged_in"] = False
+if not st.session_state.authenticated:
+    st.markdown("<h2 style='text-align: center;'>🔒 Login to Diamond OCR Software</h2>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submit = st.form_submit_button("Login")
+            
+            if submit:
+                # Direct admin / admin se login ho jayega bina error ke
+                if username.strip().lower() == "admin" and password.strip().lower() == "admin":
+                    st.session_state.authenticated = True
+                    st.rerun()
+                else:
+                    st.error("Galat Username ya Password! (Username: admin, Password: admin)")
+    st.stop()
 
-# ================= LOGIN PAGE =================
-def login():
-    st.title("🔒 Login to Diamond OCR Software")
-    
-    with st.form("login_form"):
-        user_input = st.text_input("Username")
-        pass_input = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Login")
-        
-        if submit:
-            if user_input == USERNAME and pass_input == PASSWORD:
-                st.session_state["logged_in"] = True
-                st.success("Login Successful!")
-                st.rerun()  # Page refresh hoga
-            else:
-                st.error("❌ Galat Username ya Password!")
+# --- MAIN DASHBOARD ---
+st.title("💎 Diamond OCR Auto-Updater")
+st.write("Welcome, **Admin**! Upload your slip/envelope images below.")
 
-# ================= MAIN SOFTWARE PAGE =================
-def main_software():
-    st.title("💎 Diamond Certificate Bulk Auto-Fill Software")
-    st.write(f"Welcome, **{USERNAME}**! Yaha photos upload karein.")
+uploaded_files = st.file_uploader("Upload Diamond Images (Pink Slip / White Envelope)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-    # (Yaha se aage wahi pura software ka code aayega jo pehle diya tha)
-    # jaise setup_sheet(), file_uploader(), for loop aadi.
-    
-    # Example snippet:
-    uploaded_files = st.file_uploader(
-        "Photos yaha drag & drop karein:",
-        type=["jpg", "jpeg", "png"],
-        accept_multiple_files=True,
-    )
-    
-    if st.button("Logout"):
-        st.session_state["logged_in"] = False
-        st.rerun()
-
-
-# ================= APP ROUTING =================
-if not st.session_state["logged_in"]:
-    login()
-else:
-    main_software()
+if uploaded_files:
+    st.success(f"{len(uploaded_files)} files uploaded successfully!")
