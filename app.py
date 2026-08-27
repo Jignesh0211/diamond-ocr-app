@@ -6,13 +6,14 @@ import io
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageEnhance
 import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
+from concurrent.futures import ThreadPoolExecutor
 
 # Page Config
-st.set_page_config(page_title="Diamond OCR & Google Sheet", layout="wide", page_icon="💎")
+st.set_page_config(page_title="Diamond OCR Ultra-Fast", layout="wide", page_icon="💎")
 
 # Login Authentication
 if "authenticated" not in st.session_state:
@@ -34,7 +35,7 @@ if not st.session_state.authenticated:
                     st.error("Galat Username ya Password! (admin / admin)")
     st.stop()
 
-st.title("💎 Diamond OCR Auto-Updater (High-Precision Bulk)")
+st.title("⚡ Diamond OCR Ultra-Fast Bulk Updater")
 
 # Google Sheet Connector
 def get_google_sheet():
@@ -44,7 +45,6 @@ def get_google_sheet():
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
-        
         if "GCP_JSON" in st.secrets:
             gcp_info = json.loads(st.secrets["GCP_JSON"].strip())
         elif "gcp_service_account" in st.secrets:
@@ -62,15 +62,19 @@ def get_google_sheet():
         st.error(f"Google Sheet Connection Error: {str(e)}")
         return None
 
-# Advanced Image Contrast Filter
-def enhance_image(uploaded_file):
+# Fast Image Optimization
+def fast_optimize_image(uploaded_file):
     img = Image.open(uploaded_file)
     if img.mode != "RGB":
         img = img.convert("RGB")
-    # Increase sharpness and clarity for number loops
-    img = ImageEnhance.Sharpness(img).enhance(2.0)
-    img = ImageEnhance.Contrast(img).enhance(1.6)
-    return img
+    
+    # Resize keeping aspect ratio (Max 1400px is optimum for ultra-fast OCR)
+    max_dim = 1400
+    if max(img.size) > max_dim:
+        img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+        
+    enhancer = ImageEnhance.Contrast(img)
+    return enhancer.enhance(1.3)
 
 # Formatting Helpers
 def format_mm(raw_mm):
@@ -97,77 +101,33 @@ def format_weight(raw_wt):
     match = re.search(r'\d+(\.\d+)?', str(raw_wt))
     return match.group(0) if match else str(raw_wt).strip()
 
-# Forensic AI OCR Processor
-def process_bulk_images_with_gemini(images):
+# Single Batch AI Extraction
+def process_batch_ai(batch_images, model):
+    prompt = """
+    Extract diamond parcel data from images as JSON array:
+    - SrNo: Serial Number from Pink Slip
+    - ToColour: Diamond Colour
+    - ToClarity: Diamond Clarity
+    - RecPices: Received pieces
+    - RecTotalWt: Carat weight from Certificate
+    - Actual MM: Dimensions/Measurements
+    - Actual CertNo: Exact certificate number
+    
+    Return strictly JSON:
+    [{"SrNo": "770306", "ToColour": "D", "ToClarity": "VVS2", "RecPices": "1", "RecTotalWt": "1.00", "Actual MM": "6.41*6.47*3.96", "Actual CertNo": "LG816614805"}]
+    """
     try:
-        api_key = st.secrets["GEMINI_API_KEY"].strip()
-        genai.configure(api_key=api_key)
-        
-        generation_config = {
-            "temperature": 0.0,
-            "top_p": 1.0
-        }
-        
-        model = genai.GenerativeModel(
-            model_name="gemini-3.6-flash",
-            generation_config=generation_config
-        )
-        
-        prompt = """
-        You are an ULTRA-ACCURATE OCR ENGINE for diamond manufacturing slips and certificates.
-        
-        INSTRUCTIONS FOR CERTIFICATE NUMBER:
-        - Scrutinize the Report / Certificate Number printed under the barcode or heading.
-        - Verify every individual digit: check whether the third character after LG is '8' or '6'.
-        - Do not guess or assume standard series; extract exactly what is physically printed.
-        
-        DATA MAPPING:
-        - Pink Slip -> SrNo, RecPices
-        - Certificate -> RecTotalWt (Carat weight), Actual MM (Dimensions), ToColour, ToClarity, Actual CertNo (Full Certificate ID)
-        
-        Return strictly a JSON array of objects:
-        [
-          {
-            "SrNo": "770306",
-            "ToColour": "D",
-            "ToClarity": "VVS2",
-            "RecPices": "1",
-            "RecTotalWt": "1.00",
-            "Actual MM": "6.41*6.47*3.96",
-            "Actual CertNo": "LG816614805"
-          }
-        ]
-        """
-        
-        processed_images = [enhance_image(img) for img in images]
-        contents = [prompt] + processed_images
-        
+        contents = [prompt] + batch_images
         response = model.generate_content(contents)
         json_match = re.search(r'\[.*\]', response.text.strip(), re.DOTALL)
-        
         if json_match:
-            records = json.loads(json_match.group(0))
-            
-            try:
-                upload_date = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%b-%y")
-            except Exception:
-                upload_date = datetime.now().strftime("%d-%b-%y")
-            
-            cleaned_records = []
-            for r in records:
-                r["RecDate"] = upload_date
-                r["RecTotalWt"] = format_weight(r.get("RecTotalWt", ""))
-                r["Actual MM"] = format_mm(r.get("Actual MM", ""))
-                r["Actual CertNo"] = format_cert_no(r.get("Actual CertNo", ""))
-                cleaned_records.append(r)
-            return cleaned_records
-        return []
+            return json.loads(json_match.group(0))
     except Exception as e:
-        st.error(f"AI Extraction Error: {e}")
-        return []
+        st.error(f"Batch AI Error: {e}")
+    return []
 
-# Sheet Update Logic by SrNo
-def update_sheet_by_srno(sheet, records):
+# Sheet Batch Update Logic (Fast Single Request)
+def fast_batch_update_sheet(sheet, records):
     headers = sheet.row_values(1)
     clean_headers = [re.sub(r'[^a-zA-Z0-9]', '', h).lower() for h in headers]
     
@@ -193,7 +153,7 @@ def update_sheet_by_srno(sheet, records):
     }
 
     all_srnos = [str(x).strip() for x in sheet.col_values(srno_col)]
-    updated_count = 0
+    updates = []
     
     for rec in records:
         target_sr = str(rec.get("SrNo", "")).strip()
@@ -204,35 +164,76 @@ def update_sheet_by_srno(sheet, records):
             row_idx = all_srnos.index(target_sr) + 1
             for field, col_idx in field_map.items():
                 if col_idx and field in rec and str(rec[field]).strip() not in ["None", ""]:
-                    sheet.update_cell(row_idx, col_idx, str(rec[field]))
-            updated_count += 1
-            
-    return True, f"Successfully {updated_count} diamond parcel(s) matched and updated in Google Sheet!"
+                    updates.append({
+                        'range': gspread.utils.rowcol_to_a1(row_idx, col_idx),
+                        'values': [[str(rec[field])]]
+                    })
+    
+    if updates:
+        sheet.batch_update(updates)
+        return True, f"Successfully {len(records)} record(s) updated in Google Sheet in bulk!"
+    return False, "Koi matching SrNo nahi mila."
 
-# File Upload Section (Bulk)
+# Bulk Uploader UI
 uploaded_files = st.file_uploader(
-    "Upload All Diamond Images Together (Slips & Certificates)",
+    "Upload Bulk Diamond Images",
     type=["jpg", "jpeg", "png"],
     accept_multiple_files=True
 )
 
 if uploaded_files:
-    st.info(f"📸 {len(uploaded_files)} images loaded.")
+    st.info(f"⚡ {len(uploaded_files)} images queued for high-speed processing.")
     
-    if st.button("🚀 Process & Update Google Sheet Directly"):
-        with st.spinner(f"Extracting high-contrast OCR from {len(uploaded_files)} images..."):
-            extracted_records = process_bulk_images_with_gemini(uploaded_files)
+    if st.button("🚀 Fast Process & Update Google Sheet"):
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        status_text.text("⚡ Optimizing and compressing images in parallel...")
+        with ThreadPoolExecutor() as executor:
+            optimized_images = list(executor.map(fast_optimize_image, uploaded_files))
+        
+        progress_bar.progress(30)
+        status_text.text("⚡ Processing OCR with Gemini Flash...")
+        
+        api_key = st.secrets["GEMINI_API_KEY"].strip()
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-3.6-flash", generation_config={"temperature": 0.0})
+        
+        # Process in chunks of 6 images for optimal speed & memory
+        chunk_size = 6
+        all_extracted = []
+        
+        for i in range(0, len(optimized_images), chunk_size):
+            chunk = optimized_images[i:i + chunk_size]
+            records = process_batch_ai(chunk, model)
+            all_extracted.extend(records)
             
-            if extracted_records:
-                st.write("### 📊 Extracted Summary:")
-                st.dataframe(pd.DataFrame(extracted_records), use_container_width=True)
+        progress_bar.progress(70)
+        
+        if all_extracted:
+            status_text.text("⚡ Formatting and writing batch to Google Sheet...")
+            try:
+                upload_date = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%b-%y")
+            except Exception:
+                upload_date = datetime.now().strftime("%d-%b-%y")
                 
-                sheet = get_google_sheet()
-                if sheet is not None:
-                    success, msg = update_sheet_by_srno(sheet, extracted_records)
-                    if success:
-                        st.success(f"✅ {msg}")
-                    else:
-                        st.error(f"❌ {msg}")
-            else:
-                st.warning("Could not extract valid diamond records.")
+            cleaned_records = []
+            for r in all_extracted:
+                r["RecDate"] = upload_date
+                r["RecTotalWt"] = format_weight(r.get("RecTotalWt", ""))
+                r["Actual MM"] = format_mm(r.get("Actual MM", ""))
+                r["Actual CertNo"] = format_cert_no(r.get("Actual CertNo", ""))
+                cleaned_records.append(r)
+            
+            sheet = get_google_sheet()
+            if sheet is not None:
+                success, msg = fast_batch_update_sheet(sheet, cleaned_records)
+                progress_bar.progress(100)
+                if success:
+                    st.success(f"✅ {msg}")
+                    st.dataframe(pd.DataFrame(cleaned_records), use_container_width=True)
+                else:
+                    st.error(f"❌ {msg}")
+        else:
+            progress_bar.progress(100)
+            st.warning("No data extracted from the images.")
