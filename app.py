@@ -55,7 +55,7 @@ def get_google_sheet():
             
         creds = Credentials.from_service_account_info(gcp_info, scopes=scopes)
         client = gspread.authorize(creds)
-        sheet_name = st.secrets.get("GOOGLE_SHEET_NAME", "DD sheet").strip()
+        sheet_name = st.secrets.get("GOOGLE_SHEET_NAME", "Dimond Demand Sheet").strip()
         spreadsheet = client.open(sheet_name)
         return spreadsheet.sheet1
     except Exception as e:
