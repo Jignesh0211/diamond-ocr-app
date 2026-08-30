@@ -37,8 +37,8 @@ if not st.session_state.authenticated:
 
 st.title("⚡ Diamond OCR Ultra-Fast Bulk Updater")
 
-# Google Sheet Connector
-def get_google_sheet():
+# Google Sheets Connector for Both Sheets
+def get_google_sheets():
     try:
         scopes = [
             "https://spreadsheets.google.com/feeds",
@@ -51,16 +51,67 @@ def get_google_sheet():
             gcp_info = dict(st.secrets["gcp_service_account"])
         else:
             st.error("Secrets me Service Account details nahi mili!")
-            return None
+            return None, None
             
         creds = Credentials.from_service_account_info(gcp_info, scopes=scopes)
         client = gspread.authorize(creds)
-        sheet_name = st.secrets.get("GOOGLE_SHEET_NAME", "Dimond Demand Sheet").strip()
-        spreadsheet = client.open(sheet_name)
-        return spreadsheet.sheet1
+        
+        # 1. Target Sheet (Dimond Demand Sheet)
+        target_name = st.secrets.get("GOOGLE_SHEET_NAME", "Dimond Demand Sheet").strip()
+        target_sheet = client.open(target_name).sheet1
+        
+        # 2. Source Sheet (Purchase Vendore File)
+        source_name = st.secrets.get("PURCHASE_SHEET_NAME", "Purchase Vendore File").strip()
+        source_sheet = client.open(source_name).sheet1
+        
+        return target_sheet, source_sheet
     except Exception as e:
         st.error(f"Google Sheet Connection Error: {str(e)}")
-        return None
+        return None, None
+
+# Build Fast In-Memory Lookup Map from Purchase Vendore File
+def get_vendor_lookup_map(source_sheet):
+    """
+    Reads Purchase Vendore File once and builds a dictionary mapped by Actual CertNo.
+    Column E -> Actual SupplierName
+    Column F -> SupplierBillNo
+    Column G -> SupplierBillDate
+    """
+    try:
+        all_values = source_sheet.get_all_values()
+        if not all_values or len(all_values) < 2:
+            return {}
+        
+        headers = all_values[0]
+        clean_headers = [re.sub(r'[^a-zA-Z0-9]', '', h).lower() for h in headers]
+        
+        # Find Actual CertNo column in source sheet (falls back to column 1 / A if not found by name)
+        cert_col_idx = 0
+        for pattern in ["actualcertno", "certno", "certificateno"]:
+            if pattern in clean_headers:
+                cert_col_idx = clean_headers.index(pattern)
+                break
+        
+        lookup_map = {}
+        for row in all_values[1:]:
+            if len(row) > cert_col_idx:
+                raw_cert = str(row[cert_col_idx]).strip()
+                # Clean cert key for precise matching
+                clean_key = re.sub(r'[^a-zA-Z0-9]', '', raw_cert).upper()
+                if clean_key:
+                    supplier_name = row[4].strip() if len(row) > 4 else ""  # Col E (index 4)
+                    bill_no = row[5].strip() if len(row) > 5 else ""        # Col F (index 5)
+                    bill_date = row[6].strip() if len(row) > 6 else ""      # Col G (index 6)
+                    
+                    lookup_map[clean_key] = {
+                        "Actual SupplierName": supplier_name,
+                        "SupplierBillNo": bill_no,
+                        "SupplierBillDate": bill_date
+                    }
+        return lookup_map
+    except Exception as e:
+        st.error(f"Vendor Lookup Fetch Error: {e}")
+        return {}
 
 # Fast Image Optimization
 def fast_optimize_image(uploaded_file):
@@ -149,7 +200,11 @@ def fast_batch_update_sheet(sheet, records):
         "RecTotalWt": find_col(["RecTotalWt", "RecWt", "Rec Total Wt", "Weight"]),
         "RecDate": find_col(["RecDate", "Rec Date"]),
         "Actual MM": find_col(["Actual MM", "ActualMM", "MM", "Size"]),
-        "Actual CertNo": find_col(["Actual CertNo", "ActualCertNo", "CertNo", "CertificateNo"])
+        "Actual CertNo": find_col(["Actual CertNo", "ActualCertNo", "CertNo", "CertificateNo"]),
+        # Vendor fields mapped from Purchase Vendore File
+        "Actual SupplierName": find_col(["Actual SupplierName", "ActualSupplierName", "SupplierName", "Supplier"]),
+        "SupplierBillNo": find_col(["SupplierBillNo", "Supplier Bill No", "BillNo"]),
+        "SupplierBillDate": find_col(["SupplierBillDate", "Supplier Bill Date", "BillDate"])
     }
 
     all_srnos = [str(x).strip() for x in sheet.col_values(srno_col)]
@@ -175,15 +230,15 @@ def fast_batch_update_sheet(sheet, records):
         # Step A: Data Update
         sheet.batch_update(updates)
         
-        # Step B: Highlight Row with Light Blue (#D9EAD3 / #CFE2F3)
-        light_blue_color = {"red": 0.81, "green": 0.88, "blue": 0.95} # Soft Light Blue
+        # Step B: Highlight Row with Light Blue
+        light_blue_color = {"red": 0.81, "green": 0.88, "blue": 0.95}
         for r_idx in matched_rows:
             try:
                 sheet.format(
                     f"A{r_idx}:{gspread.utils.rowcol_to_a1(r_idx, max(num_cols, 26))}",
                     {"backgroundColor": light_blue_color}
                 )
-            except Exception as fe:
+            except Exception:
                 pass
                 
         return True, f"Successfully {len(matched_rows)} row(s) updated and highlighted in Light Blue!"
@@ -207,12 +262,12 @@ if uploaded_files:
         with ThreadPoolExecutor() as executor:
             optimized_images = list(executor.map(fast_optimize_image, uploaded_files))
         
-        progress_bar.progress(30)
+        progress_bar.progress(25)
         status_text.text("⚡ Processing AI OCR...")
         
         api_key = st.secrets["GEMINI_API_KEY"].strip()
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-3.6-flash", generation_config={"temperature": 0.0})
+        model = genai.GenerativeModel("gemini-2.5-flash", generation_config={"temperature": 0.0})
         
         chunk_size = 6
         all_extracted = []
@@ -221,10 +276,16 @@ if uploaded_files:
             records = process_batch_ai(chunk, model)
             all_extracted.extend(records)
             
-        progress_bar.progress(70)
+        progress_bar.progress(60)
         
         if all_extracted:
-            status_text.text("⚡ Formatting and highlighting Google Sheet...")
+            status_text.text("⚡ Fetching vendor details from Purchase Vendore File...")
+            target_sheet, source_sheet = get_google_sheets()
+            
+            vendor_lookup = {}
+            if source_sheet is not None:
+                vendor_lookup = get_vendor_lookup_map(source_sheet)
+            
             try:
                 upload_date = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%b-%y")
             except Exception:
@@ -236,17 +297,34 @@ if uploaded_files:
                 r["RecTotalWt"] = format_weight(r.get("RecTotalWt", ""))
                 r["Actual MM"] = format_mm(r.get("Actual MM", ""))
                 r["Actual CertNo"] = format_cert_no(r.get("Actual CertNo", ""))
+                
+                # Matching via Actual CertNo
+                cert_key = re.sub(r'[^a-zA-Z0-9]', '', str(r["Actual CertNo"])).upper()
+                if cert_key in vendor_lookup:
+                    r["Actual SupplierName"] = vendor_lookup[cert_key].get("Actual SupplierName", "")
+                    r["SupplierBillNo"] = vendor_lookup[cert_key].get("SupplierBillNo", "")
+                    r["SupplierBillDate"] = vendor_lookup[cert_key].get("SupplierBillDate", "")
+                else:
+                    r["Actual SupplierName"] = ""
+                    r["SupplierBillNo"] = ""
+                    r["SupplierBillDate"] = ""
+                
                 cleaned_records.append(r)
             
-            sheet = get_google_sheet()
-            if sheet is not None:
-                success, msg = fast_batch_update_sheet(sheet, cleaned_records)
+            progress_bar.progress(80)
+            status_text.text("⚡ Formatting and updating Dimond Demand Sheet...")
+            
+            if target_sheet is not None:
+                success, msg = fast_batch_update_sheet(target_sheet, cleaned_records)
                 progress_bar.progress(100)
                 if success:
                     st.success(f"✅ {msg}")
                     st.dataframe(pd.DataFrame(cleaned_records), use_container_width=True)
                 else:
                     st.error(f"❌ {msg}")
+            else:
+                progress_bar.progress(100)
+                st.error("Target sheet connect nahi ho payi.")
         else:
             progress_bar.progress(100)
-            st.warning("No data extracted from images.")
+            st.warning("Images se koi data extract nahi ho saka.")
