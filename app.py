@@ -28,7 +28,7 @@ if not st.session_state.authenticated:
             password = st.text_input("Password", type="password")
             submit = st.form_submit_button("Login")
             if submit:
-                if username.strip().lower() == "jignesh" and password.strip() == "12345":
+                if username.strip().lower() == "jignesh" and password.strip() == "0211":
                     st.session_state.authenticated = True
                     st.rerun()
                 else:
