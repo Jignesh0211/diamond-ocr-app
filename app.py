@@ -28,11 +28,11 @@ if not st.session_state.authenticated:
             password = st.text_input("Password", type="password")
             submit = st.form_submit_button("Login")
             if submit:
-                if username.strip().lower() == "admin" and password.strip().lower() == "admin":
+                if username.strip().lower() == "jignesh" and password.strip() == "12345":
                     st.session_state.authenticated = True
                     st.rerun()
                 else:
-                    st.error("Galat Username ya Password! (admin / admin)")
+                    st.error("Galat Username ya Password!")
     st.stop()
 
 st.title("⚡ Diamond OCR Ultra-Fast Bulk Updater")
@@ -68,7 +68,6 @@ def fast_optimize_image(uploaded_file):
     if img.mode != "RGB":
         img = img.convert("RGB")
     
-    # Resize keeping aspect ratio (Max 1400px is optimum for ultra-fast OCR)
     max_dim = 1400
     if max(img.size) > max_dim:
         img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
@@ -126,9 +125,10 @@ def process_batch_ai(batch_images, model):
         st.error(f"Batch AI Error: {e}")
     return []
 
-# Sheet Batch Update Logic (Fast Single Request)
+# Sheet Batch Update Logic with Light Blue Highlighting
 def fast_batch_update_sheet(sheet, records):
     headers = sheet.row_values(1)
+    num_cols = len(headers)
     clean_headers = [re.sub(r'[^a-zA-Z0-9]', '', h).lower() for h in headers]
     
     def find_col(name_patterns):
@@ -154,6 +154,7 @@ def fast_batch_update_sheet(sheet, records):
 
     all_srnos = [str(x).strip() for x in sheet.col_values(srno_col)]
     updates = []
+    matched_rows = []
     
     for rec in records:
         target_sr = str(rec.get("SrNo", "")).strip()
@@ -162,6 +163,7 @@ def fast_batch_update_sheet(sheet, records):
         
         if target_sr in all_srnos:
             row_idx = all_srnos.index(target_sr) + 1
+            matched_rows.append(row_idx)
             for field, col_idx in field_map.items():
                 if col_idx and field in rec and str(rec[field]).strip() not in ["None", ""]:
                     updates.append({
@@ -170,8 +172,21 @@ def fast_batch_update_sheet(sheet, records):
                     })
     
     if updates:
+        # Step A: Data Update
         sheet.batch_update(updates)
-        return True, f"Successfully {len(records)} record(s) updated in Google Sheet in bulk!"
+        
+        # Step B: Highlight Row with Light Blue (#D9EAD3 / #CFE2F3)
+        light_blue_color = {"red": 0.81, "green": 0.88, "blue": 0.95} # Soft Light Blue
+        for r_idx in matched_rows:
+            try:
+                sheet.format(
+                    f"A{r_idx}:{gspread.utils.rowcol_to_a1(r_idx, max(num_cols, 26))}",
+                    {"backgroundColor": light_blue_color}
+                )
+            except Exception as fe:
+                pass
+                
+        return True, f"Successfully {len(matched_rows)} row(s) updated and highlighted in Light Blue!"
     return False, "Koi matching SrNo nahi mila."
 
 # Bulk Uploader UI
@@ -188,21 +203,19 @@ if uploaded_files:
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        status_text.text("⚡ Optimizing and compressing images in parallel...")
+        status_text.text("⚡ Optimizing images in parallel...")
         with ThreadPoolExecutor() as executor:
             optimized_images = list(executor.map(fast_optimize_image, uploaded_files))
         
         progress_bar.progress(30)
-        status_text.text("⚡ Processing OCR with Gemini Flash...")
+        status_text.text("⚡ Processing AI OCR...")
         
         api_key = st.secrets["GEMINI_API_KEY"].strip()
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-3.6-flash", generation_config={"temperature": 0.0})
         
-        # Process in chunks of 6 images for optimal speed & memory
         chunk_size = 6
         all_extracted = []
-        
         for i in range(0, len(optimized_images), chunk_size):
             chunk = optimized_images[i:i + chunk_size]
             records = process_batch_ai(chunk, model)
@@ -211,7 +224,7 @@ if uploaded_files:
         progress_bar.progress(70)
         
         if all_extracted:
-            status_text.text("⚡ Formatting and writing batch to Google Sheet...")
+            status_text.text("⚡ Formatting and highlighting Google Sheet...")
             try:
                 upload_date = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%b-%y")
             except Exception:
@@ -236,4 +249,4 @@ if uploaded_files:
                     st.error(f"❌ {msg}")
         else:
             progress_bar.progress(100)
-            st.warning("No data extracted from the images.")
+            st.warning("No data extracted from images.")
